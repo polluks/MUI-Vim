@@ -58,7 +58,7 @@ change_warning(int col)
 		)
 	{
 	    out_flush();
-	    ui_delay(1000L, TRUE); // give the user time to think about it
+	    ui_delay(1002L, TRUE); // give the user time to think about it
 	}
 	curbuf->b_did_warn = TRUE;
 	redraw_cmdline = FALSE;	// don't redraw and erase the message
@@ -118,7 +118,7 @@ changed(void)
 	    if (need_wait_return && emsg_silent == 0)
 	    {
 		out_flush();
-		ui_delay(2000L, TRUE);
+		ui_delay(2002L, TRUE);
 		wait_return(TRUE);
 		msg_scroll = save_msg_scroll;
 	    }
@@ -371,9 +371,9 @@ invoke_listeners(buf_T *buf)
 	if (start > lnum)
 	    start = lnum;
 	lnum = dict_get_number(li->li_tv.vval.v_dict, (char_u *)"end");
-	if (lnum > end)
+	if (end < lnum)
 	    end = lnum;
-	added = dict_get_number(li->li_tv.vval.v_dict, (char_u *)"added");
+	added += dict_get_number(li->li_tv.vval.v_dict, (char_u *)"added");
     }
     argv[1].v_type = VAR_NUMBER;
     argv[1].vval.v_number = start;
@@ -609,16 +609,21 @@ changed_common(
 	    if (hasAnyFolding(wp))
 		set_topline(wp, wp->w_topline);
 #endif
-	    // Relative numbering may require updating more.  Cursor line
-	    // highlighting probably needs to be updated if it's below the
-	    // change (or is using screenline highlighting)
-	    if (wp->w_p_rnu
-#ifdef FEAT_SYN_HL
-		    || ((wp->w_p_cul && lnum <= wp->w_last_cursorline)
-			    || (wp->w_p_culopt_flags & CULOPT_SCRLINE))
-#endif
-		    )
+	    // Relative numbering may require updating more.
+	    if (wp->w_p_rnu)
 		redraw_win_later(wp, SOME_VALID);
+#ifdef FEAT_SYN_HL
+	    // Cursor line highlighting probably need to be updated with
+	    // "VALID" if it's below the change.
+	    // If the cursor line is inside the change we need to redraw more.
+	    if (wp->w_p_cul)
+	    {
+		if (xtra == 0)
+		    redraw_win_later(wp, VALID);
+		else if (lnum <= wp->w_last_cursorline)
+		    redraw_win_later(wp, SOME_VALID);
+	    }
+#endif
 	}
     }
 
@@ -860,6 +865,57 @@ unchanged(buf_T *buf, int ff, int always_inc_changedtick)
 #ifdef FEAT_NETBEANS_INTG
     netbeans_unmodified(buf);
 #endif
+}
+
+/*
+ * Save the current values of 'fileformat' and 'fileencoding', so that we know
+ * the file must be considered changed when the value is different.
+ */
+    void
+save_file_ff(buf_T *buf)
+{
+    buf->b_start_ffc = *buf->b_p_ff;
+    buf->b_start_eol = buf->b_p_eol;
+    buf->b_start_bomb = buf->b_p_bomb;
+
+    /* Only use free/alloc when necessary, they take time. */
+    if (buf->b_start_fenc == NULL
+			     || STRCMP(buf->b_start_fenc, buf->b_p_fenc) != 0)
+    {
+	vim_free(buf->b_start_fenc);
+	buf->b_start_fenc = vim_strsave(buf->b_p_fenc);
+    }
+}
+
+/*
+ * Return TRUE if 'fileformat' and/or 'fileencoding' has a different value
+ * from when editing started (save_file_ff() called).
+ * Also when 'endofline' was changed and 'binary' is set, or when 'bomb' was
+ * changed and 'binary' is not set.
+ * Also when 'endofline' was changed and 'fixeol' is not set.
+ * When "ignore_empty" is true don't consider a new, empty buffer to be
+ * changed.
+ */
+    int
+file_ff_differs(buf_T *buf, int ignore_empty)
+{
+    /* In a buffer that was never loaded the options are not valid. */
+    if (buf->b_flags & BF_NEVERLOADED)
+	return FALSE;
+    if (ignore_empty
+	    && (buf->b_flags & BF_NEW)
+	    && buf->b_ml.ml_line_count == 1
+	    && *ml_get_buf(buf, (linenr_T)1, FALSE) == NUL)
+	return FALSE;
+    if (buf->b_start_ffc != *buf->b_p_ff)
+	return TRUE;
+    if ((buf->b_p_bin || !buf->b_p_fixeol) && buf->b_start_eol != buf->b_p_eol)
+	return TRUE;
+    if (!buf->b_p_bin && buf->b_start_bomb != buf->b_p_bomb)
+	return TRUE;
+    if (buf->b_start_fenc == NULL)
+	return (*buf->b_p_fenc != NUL);
+    return (STRCMP(buf->b_start_fenc, buf->b_p_fenc) != 0);
 }
 
 /*

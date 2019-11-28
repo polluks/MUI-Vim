@@ -912,6 +912,8 @@ static struct builtin_term builtin_termcaps[] =
     {(int)KS_TE,	IF_EB("\033[2J\033[?47l\0338",
 				  ESC_STR "[2J" ESC_STR_nc "[?47l" ESC_STR_nc "8")},
 #  endif
+    {(int)KS_CTI,	IF_EB("\033[>4;2m", ESC_STR_nc "[>4;2m")},
+    {(int)KS_CTE,	IF_EB("\033[>4;m", ESC_STR_nc "[>4;m")},
     {(int)KS_CIS,	IF_EB("\033]1;", ESC_STR "]1;")},
     {(int)KS_CIE,	"\007"},
     {(int)KS_TS,	IF_EB("\033]2;", ESC_STR "]2;")},
@@ -1759,7 +1761,7 @@ report_default_term(char_u *term)
 	screen_start();	/* don't know where cursor is now */
 	out_flush();
 	if (!is_not_a_term())
-	    ui_delay(2000L, TRUE);
+	    ui_delay(2007L, TRUE);
     }
 }
 
@@ -1957,10 +1959,12 @@ set_termname(char_u *term)
 #if defined(UNIX) || defined(VMS)
     term_is_xterm = vim_is_xterm(term);
 #endif
+#ifdef FEAT_TERMRESPONSE
+    is_not_xterm = FALSE;
+    is_mac_terminal = FALSE;
+#endif
 
-#ifdef FEAT_MOUSE
-# if defined(UNIX) || defined(VMS)
-#  ifdef FEAT_MOUSE_TTY
+#if defined(UNIX) || defined(VMS)
     /*
      * For Unix, set the 'ttymouse' option to the type of mouse to be used.
      * The termcode for the mouse is added as a side effect in option.c.
@@ -1968,7 +1972,7 @@ set_termname(char_u *term)
     {
 	char_u	*p = (char_u *)"";
 
-#  ifdef FEAT_MOUSE_XTERM
+# ifdef FEAT_MOUSE_XTERM
 	if (use_xterm_like_mouse(term))
 	{
 	    if (use_xterm_mouse())
@@ -1976,7 +1980,7 @@ set_termname(char_u *term)
 	    else
 		p = (char_u *)"xterm";
 	}
-#  endif
+# endif
 	if (p != NULL)
 	{
 	    set_option_value((char_u *)"ttym", 0L, p, 0);
@@ -1985,17 +1989,15 @@ set_termname(char_u *term)
 	    reset_option_was_set((char_u *)"ttym");
 	}
 	if (p == NULL
-#   ifdef FEAT_GUI
+#  ifdef FEAT_GUI
 		|| gui.in_use
-#   endif
+#  endif
 		)
 	    check_mouse_termcode();	/* set mouse termcode anyway */
     }
-#  endif
-# else
+#else
     set_mouse_termcode(KS_MOUSE, (char_u *)"\233M");
-# endif
-#endif	/* FEAT_MOUSE */
+#endif
 
 #ifdef USE_TERM_CONSOLE
     /* DEFAULT_TERM indicates that it is the machine console. */
@@ -2542,31 +2544,22 @@ out_char(unsigned c)
 	out_flush();
 }
 
-static void out_char_nf(unsigned);
-
 /*
- * out_char_nf(c): like out_char(), but don't flush when p_wd is set
+ * Output "c" like out_char(), but don't flush when p_wd is set.
  */
     static void
 out_char_nf(unsigned c)
 {
-#if defined(UNIX) || defined(VMS) || defined(AMIGA) || defined(MACOS_X)
-    if (c == '\n')	/* turn LF into CR-LF (CRMOD doesn't seem to do this) */
-	out_char_nf('\r');
-#endif
-
     out_buf[out_pos++] = c;
 
     if (out_pos >= OUT_SIZE)
 	out_flush();
 }
 
-#if defined(FEAT_TITLE) || defined(FEAT_MOUSE_TTY) || defined(FEAT_GUI) \
-    || defined(FEAT_TERMRESPONSE) || defined(PROTO)
 /*
- * A never-padding out_str.
- * use this whenever you don't want to run the string through tputs.
- * tputs above is harmless, but tputs from the termcap library
+ * A never-padding out_str().
+ * Use this whenever you don't want to run the string through tputs().
+ * tputs() above is harmless, but tputs() from the termcap library
  * is likely to strip off leading digits, that it mistakes for padding
  * information, and "%i", "%d", etc.
  * This should only be used for writing terminal codes, not for outputting
@@ -2586,7 +2579,6 @@ out_str_nf(char_u *s)
     if (p_wd)
 	out_flush();
 }
-#endif
 
 /*
  * A conditional-flushing out_str, mainly for visualbell.
@@ -2661,7 +2653,7 @@ out_str_cf(char_u *s)
 
 /*
  * out_str(s): Put a character string a byte at a time into the output buffer.
- * If HAVE_TGETENT is defined use the termcap parser. (jw)
+ * If HAVE_TGETENT is defined use tputs(), the termcap parser. (jw)
  * This should only be used for writing terminal codes, not for outputting
  * normal text (use functions like msg_puts() and screen_putchar() for that).
  */
@@ -2818,7 +2810,7 @@ term_get_winpos(int *x, int *y, varnumber_T timeout)
 	    *y = winpos_y;
 	    return OK;
 	}
-	ui_delay(10, FALSE);
+	ui_delay(10L, FALSE);
     }
     /* Do not reset "did_request_winpos", if we timed out the response might
      * still come later and we must consume it. */
@@ -2906,6 +2898,40 @@ term_bg_color(int n)
 	term_color(T_CSB, n);
 }
 
+/*
+ * Return "dark" or "light" depending on the kind of terminal.
+ * This is just guessing!  Recognized are:
+ * "linux"	    Linux console
+ * "screen.linux"   Linux console with screen
+ * "cygwin.*"	    Cygwin shell
+ * "putty.*"	    Putty program
+ * We also check the COLORFGBG environment variable, which is set by
+ * rxvt and derivatives. This variable contains either two or three
+ * values separated by semicolons; we want the last value in either
+ * case. If this value is 0-6 or 8, our background is dark.
+ */
+    char_u *
+term_bg_default(void)
+{
+#if defined(MSWIN)
+    /* DOS console is nearly always black */
+    return (char_u *)"dark";
+#else
+    char_u	*p;
+
+    if (STRCMP(T_NAME, "linux") == 0
+	    || STRCMP(T_NAME, "screen.linux") == 0
+	    || STRNCMP(T_NAME, "cygwin", 6) == 0
+	    || STRNCMP(T_NAME, "putty", 5) == 0
+	    || ((p = mch_getenv((char_u *)"COLORFGBG")) != NULL
+		&& (p = vim_strrchr(p, ';')) != NULL
+		&& ((p[1] >= '0' && p[1] <= '6') || p[1] == '8')
+		&& p[2] == NUL))
+	return (char_u *)"dark";
+    return (char_u *)"light";
+#endif
+}
+
 #if defined(FEAT_TERMGUICOLORS) || defined(PROTO)
 
 #define RED(rgb)   (((long_u)(rgb) >> 16) & 0xFF)
@@ -2944,10 +2970,10 @@ term_bg_rgb_color(guicolor_T rgb)
     void
 term_settitle(char_u *title)
 {
-    /* t_ts takes one argument: column in status line */
-    OUT_STR(tgoto((char *)T_TS, 0, 0));	/* set title start */
+    // t_ts takes one argument: column in status line
+    OUT_STR(tgoto((char *)T_TS, 0, 0));	// set title start
     out_str_nf(title);
-    out_str(T_FS);			/* set title end */
+    out_str(T_FS);			// set title end
     out_flush();
 }
 
@@ -3147,9 +3173,6 @@ get_long_from_buf(char_u *buf, long_u *val)
 }
 #endif
 
-#if defined(FEAT_GUI) \
-    || (defined(FEAT_MOUSE) && (!defined(UNIX) || defined(FEAT_MOUSE_XTERM) \
-		|| defined(FEAT_MOUSE_GPM) || defined(FEAT_SYSMOUSE)))
 /*
  * Read the next num_bytes bytes from buf, and store them in bytes.  Assume
  * that buf has been through inchar().	Returns the actual number of bytes used
@@ -3187,7 +3210,6 @@ get_bytes_from_buf(char_u *buf, char_u *bytes, int num_bytes)
     }
     return len;
 }
-#endif
 
 /*
  * Check if the new shell size is valid, correct it if it's too small or way
@@ -3432,10 +3454,8 @@ settmode(int tmode)
 		check_for_codes_from_term();
 	    }
 #endif
-#ifdef FEAT_MOUSE_TTY
 	    if (tmode != TMODE_RAW)
 		mch_setmouse(FALSE);	// switch mouse off
-#endif
 	    if (termcap_active)
 	    {
 		if (tmode != TMODE_RAW)
@@ -3793,9 +3813,9 @@ term_cursor_color(char_u *color)
 {
     if (*T_CSC != NUL)
     {
-	out_str(T_CSC);			/* set cursor color start */
+	out_str(T_CSC);		// set cursor color start
 	out_str_nf(color);
-	out_str(T_CEC);			/* set cursor color end */
+	out_str(T_CEC);		// set cursor color end
 	out_flush();
     }
 }
@@ -4658,8 +4678,8 @@ not_enough:
 		    if (tp[0] == CSI)
 			switch_to_8bit();
 
-		    // rxvt sends its version number: "20703" is 2.7.3.
 		    // Screen sends 40500.
+		    // rxvt sends its version number: "20703" is 2.7.3.
 		    // Ignore it for when the user has set 'term' to xterm,
 		    // even though it's an rxvt.
 		    if (version > 20000)
@@ -4670,6 +4690,7 @@ not_enough:
 			int need_flush = FALSE;
 			int is_iterm2 = FALSE;
 			int is_mintty = FALSE;
+			int is_screen = FALSE;
 
 			// mintty 2.9.5 sends 77;20905;0c.
 			// (77 is ASCII 'M' for mintty.)
@@ -4715,14 +4736,21 @@ not_enough:
 				is_not_xterm = TRUE;
 			}
 
+			// screen sends 83;40500;0 83 is 'S' in ASCII.
+			if (arg[0] == 83)
+			    is_screen = TRUE;
+
 			// Only set 'ttymouse' automatically if it was not set
 			// by the user already.
 			if (!option_was_set((char_u *)"ttym"))
 			{
 			    // Xterm version 277 supports SGR.  Also support
-			    // Terminal.app, iTerm2 and mintty.
-			    if (version >= 277 || is_iterm2 || is_mac_terminal
-				    || is_mintty)
+			    // Terminal.app, iTerm2, mintty, and screen 4.7+.
+			    if ((!is_screen && version >= 277)
+				    || is_iterm2
+				    || is_mac_terminal
+				    || is_mintty
+				    || (is_screen && arg[1] >= 40700))
 				set_option_value((char_u *)"ttym", 0L,
 							  (char_u *)"sgr", 0);
 			    // if xterm version >= 95 use mouse dragging
@@ -5080,8 +5108,7 @@ not_enough:
 
 	/* We only get here when we have a complete termcode match */
 
-#ifdef FEAT_MOUSE
-# ifdef FEAT_GUI
+#ifdef FEAT_GUI
 	/*
 	 * Only in the GUI: Fetch the pointer coordinates of the scroll event
 	 * so that we know which window to scroll later.
@@ -5105,29 +5132,29 @@ not_enough:
 	    slen += num_bytes;
 	}
 	else
-# endif
+#endif
 	/*
 	 * If it is a mouse click, get the coordinates.
 	 */
 	if (key_name[0] == KS_MOUSE
-# ifdef FEAT_MOUSE_GPM
+#ifdef FEAT_MOUSE_GPM
 		|| key_name[0] == KS_GPM_MOUSE
-# endif
-# ifdef FEAT_MOUSE_JSB
+#endif
+#ifdef FEAT_MOUSE_JSB
 		|| key_name[0] == KS_JSBTERM_MOUSE
-# endif
-# ifdef FEAT_MOUSE_NET
+#endif
+#ifdef FEAT_MOUSE_NET
 		|| key_name[0] == KS_NETTERM_MOUSE
-# endif
-# ifdef FEAT_MOUSE_DEC
+#endif
+#ifdef FEAT_MOUSE_DEC
 		|| key_name[0] == KS_DEC_MOUSE
-# endif
-# ifdef FEAT_MOUSE_PTERM
+#endif
+#ifdef FEAT_MOUSE_PTERM
 		|| key_name[0] == KS_PTERM_MOUSE
-# endif
-# ifdef FEAT_MOUSE_URXVT
+#endif
+#ifdef FEAT_MOUSE_URXVT
 		|| key_name[0] == KS_URXVT_MOUSE
-# endif
+#endif
 		|| key_name[0] == KS_SGR_MOUSE
 		|| key_name[0] == KS_SGR_MOUSE_RELEASE)
 	{
@@ -5135,7 +5162,6 @@ not_enough:
 							     &modifiers) == -1)
 		return -1;
 	}
-#endif /* FEAT_MOUSE */
 
 #ifdef FEAT_GUI
 	/*

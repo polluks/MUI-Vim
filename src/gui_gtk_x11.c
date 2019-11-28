@@ -1159,14 +1159,6 @@ key_press_event(GtkWidget *widget UNUSED,
 	return TRUE;
 #endif
 
-#ifdef FEAT_HANGULIN
-    if (key_sym == GDK_space && (state & GDK_SHIFT_MASK))
-    {
-	hangul_input_state_toggle();
-	return TRUE;
-    }
-#endif
-
 #ifdef SunXK_F36
     /*
      * These keys have bogus lookup strings, and trapping them here is
@@ -2895,7 +2887,7 @@ drawarea_configure_event_cb(GtkWidget	      *widget,
      *
      * Naturally, configure events propagated to here like that are fallacious
      * and, as a matter of fact, they trigger a geometric collapse of
-     * gui.drawarea in fullscreen and miximized modes.
+     * gui.drawarea in fullscreen and maximized modes.
      *
      * To filter out such nuisance events, we are making use of the fact that
      * the field send_event of such GdkEventConfigures is set to FALSE in
@@ -4387,10 +4379,6 @@ gui_mch_open(void)
 
     g_signal_connect(G_OBJECT(gui.mainwin), "destroy",
 		     G_CALLBACK(mainwin_destroy_cb), NULL);
-
-#ifdef FEAT_HANGULIN
-    hangul_keyboard_set();
-#endif
 
     /*
      * Notify the fixed area about the need to resize the contents of the

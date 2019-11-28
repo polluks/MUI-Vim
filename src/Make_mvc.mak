@@ -1,7 +1,7 @@
 # Makefile for Vim on Win32 (Windows XP/2003/Vista/7/8/10) and Win64,
-# using the Microsoft Visual C++ compilers. Known to work with VC5, VC6 (VS98),
-# VC7.0 (VS2002), VC7.1 (VS2003), VC8 (VS2005), VC9 (VS2008), VC10 (VS2010),
-# VC11 (VS2012), VC12 (VS2013), VC14 (VS2015) and VC15 (VS2017)
+# using the Microsoft Visual C++ compilers. Known to work with VC10 (VS2010),
+# VC11 (VS2012), VC12 (VS2013), VC14 (VS2015), VC14.1 (VS2017) and
+# VC14.2 (VS2019).
 #
 # To build using other Windows compilers, see INSTALLpc.txt
 #
@@ -276,15 +276,9 @@ link = link
 !if $(MSVCVER) < 1900
 MSVC_MAJOR = ($(MSVCVER) / 100 - 6)
 MSVCRT_VER = ($(MSVCVER) / 10 - 60)
-# Visual C++ 2017 needs special handling
-# it has an _MSC_VER of 1910->14.1, but is actually v15 with runtime v140
-# TODO: what's the maximum value?
-!elseif $(MSVCVER) >= 1910
-MSVC_MAJOR = 15
-MSVCRT_VER = 140
 !else
 MSVC_MAJOR = ($(MSVCVER) / 100 - 5)
-MSVCRT_VER = ($(MSVCVER) / 10 - 50)
+MSVCRT_VER = ($(MSVCVER) / 100 * 10 - 50)
 !endif
 
 # Calculate MSVC_FULL for Visual C++ 8 and up.
@@ -1279,6 +1273,17 @@ MAIN_TARGET = $(GVIM).exe $(VIM).exe $(VIMDLLBASE).dll
 MAIN_TARGET = $(VIM).exe
 !endif
 
+# Target to run individual tests.
+VIMTESTTARGET = $(VIM).exe
+
+OLD_TEST_OUTFILES = \
+	$(SCRIPTS_FIRST) \
+	$(SCRIPTS_ALL) \
+	$(SCRIPTS_MORE1) \
+	$(SCRIPTS_MORE4) \
+	$(SCRIPTS_WIN32) \
+	$(SCRIPTS_GUI)
+
 all:	$(MAIN_TARGET) \
 	vimrun.exe \
 	install.exe \
@@ -1370,7 +1375,7 @@ tags: notags
 notags:
 	- if exist tags del tags
 
-clean:
+clean: testclean
 	- if exist $(OUTDIR)/nul $(DEL_TREE) $(OUTDIR)
 	- if exist *.obj del *.obj
 	- if exist $(VIM).exe del $(VIM).exe
@@ -1405,7 +1410,6 @@ clean:
 	cd GvimExt
 	$(MAKE) /NOLOGO -f Makefile clean
 	cd ..
-	- if exist testdir\*.out del testdir\*.out
 
 test:
 	cd testdir
@@ -1422,13 +1426,24 @@ testclean:
 	$(MAKE) /NOLOGO -f Make_dos.mak clean
 	cd ..
 
+# Run individual OLD style test.
+# These do not depend on the executable, compile it when needed.
+$(OLD_TEST_OUTFILES:.out=):
+	cd testdir
+	- if exist $@.out del $@.out
+	$(MAKE) /NOLOGO -f Make_dos.mak VIMPROG=..\$(VIMTESTTARGET) nolog
+	$(MAKE) /NOLOGO -f Make_dos.mak VIMPROG=..\$(VIMTESTTARGET) $@.out
+	@ if exist test.log ( type test.log & exit /b 1 )
+	cd ..
+
+# Run individual NEW style test.
+# These do not depend on the executable, compile it when needed.
 $(NEW_TESTS):
 	cd testdir
 	- if exist $@.res del $@.res
-	$(MAKE) /NOLOGO -f Make_dos.mak nolog
-	$(MAKE) /NOLOGO -f Make_dos.mak $@.res
-	$(MAKE) /NOLOGO -f Make_dos.mak report
-	type messages
+	$(MAKE) /NOLOGO -f Make_dos.mak VIMPROG=..\$(VIMTESTTARGET) nolog
+	$(MAKE) /NOLOGO -f Make_dos.mak VIMPROG=..\$(VIMTESTTARGET) $@.res
+	$(MAKE) /NOLOGO -f Make_dos.mak VIMPROG=..\$(VIMTESTTARGET) report
 	cd ..
 
 ###########################################################################

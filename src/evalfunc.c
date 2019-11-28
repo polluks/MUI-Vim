@@ -20,7 +20,7 @@
 # include <float.h>
 #endif
 
-#ifdef MACOS_X
+#if defined(MACOS_X)
 # include <time.h>	// for time_t
 #endif
 
@@ -237,6 +237,9 @@ static void f_stridx(typval_T *argvars, typval_T *rettv);
 static void f_strlen(typval_T *argvars, typval_T *rettv);
 static void f_strcharpart(typval_T *argvars, typval_T *rettv);
 static void f_strpart(typval_T *argvars, typval_T *rettv);
+#ifdef HAVE_STRPTIME
+static void f_strptime(typval_T *argvars, typval_T *rettv);
+#endif
 static void f_strridx(typval_T *argvars, typval_T *rettv);
 static void f_strtrans(typval_T *argvars, typval_T *rettv);
 static void f_strdisplaywidth(typval_T *argvars, typval_T *rettv);
@@ -465,6 +468,7 @@ static funcentry_T global_functions[] =
     {"getline",		1, 2, FEARG_1,	  f_getline},
     {"getloclist",	1, 2, 0,	  f_getloclist},
     {"getmatches",	0, 1, 0,	  f_getmatches},
+    {"getmousepos",	0, 0, 0,	  f_getmousepos},
     {"getpid",		0, 0, 0,	  f_getpid},
     {"getpos",		1, 1, FEARG_1,	  f_getpos},
     {"getqflist",	0, 1, 0,	  f_getqflist},
@@ -737,6 +741,9 @@ static funcentry_T global_functions[] =
     {"string",		1, 1, FEARG_1,	  f_string},
     {"strlen",		1, 1, FEARG_1,	  f_strlen},
     {"strpart",		2, 3, FEARG_1,	  f_strpart},
+#ifdef HAVE_STRPTIME
+    {"strptime",	2, 2, FEARG_1,	  f_strptime},
+#endif
     {"strridx",		2, 3, FEARG_1,	  f_strridx},
     {"strtrans",	1, 1, FEARG_1,	  f_strtrans},
     {"strwidth",	1, 1, FEARG_1,	  f_strwidth},
@@ -815,9 +822,7 @@ static funcentry_T global_functions[] =
 #ifdef FEAT_GUI
     {"test_scrollbar",	3, 3, FEARG_2,	  f_test_scrollbar},
 #endif
-#ifdef FEAT_MOUSE
     {"test_setmouse",	2, 2, 0,	  f_test_setmouse},
-#endif
     {"test_settime",	1, 1, FEARG_1,	  f_test_settime},
 #ifdef FEAT_TIMERS
     {"timer_info",	0, 1, FEARG_1,	  f_timer_info},
@@ -2529,6 +2534,12 @@ common_function(typval_T *argvars, typval_T *rettv, int is_funcref)
 		list = argvars[arg_idx].vval.v_list;
 		if (list == NULL || list->lv_len == 0)
 		    arg_idx = 0;
+		else if (list->lv_len > MAX_FUNC_ARGS)
+		{
+		    emsg_funcname((char *)e_toomanyarg, s);
+		    vim_free(name);
+		    goto theend;
+		}
 	    }
 	}
 	if (dict_idx > 0 || arg_idx > 0 || arg_pt != NULL || is_funcref)
@@ -3390,9 +3401,6 @@ f_has(typval_T *argvars, typval_T *rettv)
 #ifdef FEAT_GUI_MSWIN
 	"gui_win32",
 #endif
-#ifdef FEAT_HANGULIN
-	"hangul_input",
-#endif
 #if defined(HAVE_ICONV_H) && defined(USE_ICONV)
 	"iconv",
 #endif
@@ -3433,9 +3441,7 @@ f_has(typval_T *argvars, typval_T *rettv)
 	"mksession",
 #endif
 	"modify_fname",
-#ifdef FEAT_MOUSE
 	"mouse",
-#endif
 #ifdef FEAT_MOUSESHAPE
 	"mouseshape",
 #endif
@@ -5698,12 +5704,13 @@ search_cmn(typval_T *argvars, pos_T *match_pos, int *flagsp)
     int		dir;
     int		retval = 0;	/* default: FAIL */
     long	lnum_stop = 0;
-    proftime_T	tm;
 #ifdef FEAT_RELTIME
+    proftime_T	tm;
     long	time_limit = 0;
 #endif
     int		options = SEARCH_KEEP;
     int		subpatnum;
+    searchit_arg_T sia;
 
     pat = tv_get_string(&argvars[0]);
     dir = get_search_arg(&argvars[1], flagsp);	/* may set p_ws */
@@ -5752,8 +5759,13 @@ search_cmn(typval_T *argvars, pos_T *match_pos, int *flagsp)
     }
 
     pos = save_cursor = curwin->w_cursor;
+    vim_memset(&sia, 0, sizeof(sia));
+    sia.sa_stop_lnum = (linenr_T)lnum_stop;
+#ifdef FEAT_RELTIME
+    sia.sa_tm = &tm;
+#endif
     subpatnum = searchit(curwin, curbuf, &pos, NULL, dir, pat, 1L,
-			   options, RE_SEARCH, (linenr_T)lnum_stop, &tm, NULL);
+						     options, RE_SEARCH, &sia);
     if (subpatnum != FAIL)
     {
 	if (flags & SP_SUBPAT)
@@ -6151,7 +6163,9 @@ do_searchpair(
     int		use_skip = FALSE;
     int		err;
     int		options = SEARCH_KEEP;
+#ifdef FEAT_RELTIME
     proftime_T	tm;
+#endif
 
     /* Make 'cpoptions' empty, the 'l' flag should not be used here. */
     save_cpo = p_cpo;
@@ -6192,8 +6206,15 @@ do_searchpair(
     pat = pat3;
     for (;;)
     {
+	searchit_arg_T sia;
+
+	vim_memset(&sia, 0, sizeof(sia));
+	sia.sa_stop_lnum = lnum_stop;
+#ifdef FEAT_RELTIME
+	sia.sa_tm = &tm;
+#endif
 	n = searchit(curwin, curbuf, &pos, NULL, dir, pat, 1L,
-				     options, RE_SEARCH, lnum_stop, &tm, NULL);
+						     options, RE_SEARCH, &sia);
 	if (n == FAIL || (firstpos.lnum != 0 && EQUAL_POS(pos, firstpos)))
 	    /* didn't find it or found the first match again: FAIL */
 	    break;
@@ -7393,6 +7414,40 @@ f_strpart(typval_T *argvars, typval_T *rettv)
     rettv->v_type = VAR_STRING;
     rettv->vval.v_string = vim_strnsave(p + n, len);
 }
+
+#ifdef HAVE_STRPTIME
+/*
+ * "strptime({format}, {timestring})" function
+ */
+    static void
+f_strptime(typval_T *argvars, typval_T *rettv)
+{
+    struct tm	tmval;
+    char_u	*fmt;
+    char_u	*str;
+    vimconv_T   conv;
+    char_u	*enc;
+
+    vim_memset(&tmval, NUL, sizeof(tmval));
+    fmt = tv_get_string(&argvars[0]);
+    str = tv_get_string(&argvars[1]);
+
+    conv.vc_type = CONV_NONE;
+    enc = enc_locale();
+    convert_setup(&conv, p_enc, enc);
+    if (conv.vc_type != CONV_NONE)
+	fmt = string_convert(&conv, fmt, NULL);
+    if (fmt == NULL
+	    || strptime((char *)str, (char *)fmt, &tmval) == NULL
+	    || (rettv->vval.v_number = mktime(&tmval)) == -1)
+	rettv->vval.v_number = 0;
+
+    if (conv.vc_type != CONV_NONE)
+	vim_free(fmt);
+    convert_setup(&conv, NULL, NULL);
+    vim_free(enc);
+}
+#endif
 
 /*
  * "strridx()" function

@@ -251,18 +251,23 @@ linelen(int *has_tab)
     int	    save;
     int	    len;
 
-    /* find the first non-blank character */
+    // Get the line.  If it's empty bail out early (could be the empty string
+    // for an unloaded buffer).
     line = ml_get_curline();
+    if (*line == NUL)
+	return 0;
+
+    // find the first non-blank character
     first = skipwhite(line);
 
-    /* find the character after the last non-blank character */
+    // find the character after the last non-blank character
     for (last = first + STRLEN(first);
 				last > first && VIM_ISWHITE(last[-1]); --last)
 	;
     save = *last;
     *last = NUL;
-    len = linetabsize(line);		/* get line length */
-    if (has_tab != NULL)		/* check for embedded TAB */
+    len = linetabsize(line);		// get line length
+    if (has_tab != NULL)		// check for embedded TAB
 	*has_tab = (vim_strchr(first, TAB) != NULL);
     *last = save;
 
@@ -744,8 +749,11 @@ do_move(linenr_T line1, linenr_T line2, linenr_T dest)
 		foldMoveRange(&win->w_folds, line1, line2, dest);
 	}
 #endif
-	curbuf->b_op_start.lnum = dest - num_lines + 1;
-	curbuf->b_op_end.lnum = dest;
+	if (!cmdmod.lockmarks)
+	{
+	    curbuf->b_op_start.lnum = dest - num_lines + 1;
+	    curbuf->b_op_end.lnum = dest;
+	}
     }
     else
     {
@@ -756,10 +764,14 @@ do_move(linenr_T line1, linenr_T line2, linenr_T dest)
 		foldMoveRange(&win->w_folds, dest + 1, line1 - 1, line2);
 	}
 #endif
-	curbuf->b_op_start.lnum = dest + 1;
-	curbuf->b_op_end.lnum = dest + num_lines;
+	if (!cmdmod.lockmarks)
+	{
+	    curbuf->b_op_start.lnum = dest + 1;
+	    curbuf->b_op_end.lnum = dest + num_lines;
+	}
     }
-    curbuf->b_op_start.col = curbuf->b_op_end.col = 0;
+    if (!cmdmod.lockmarks)
+	curbuf->b_op_start.col = curbuf->b_op_end.col = 0;
     mark_adjust_nofold(last_line - num_lines + 1, last_line,
 					     -(last_line - dest - extra), 0L);
 
@@ -808,9 +820,12 @@ ex_copy(linenr_T line1, linenr_T line2, linenr_T n)
     char_u	*p;
 
     count = line2 - line1 + 1;
-    curbuf->b_op_start.lnum = n + 1;
-    curbuf->b_op_end.lnum = n + count;
-    curbuf->b_op_start.col = curbuf->b_op_end.col = 0;
+    if (!cmdmod.lockmarks)
+    {
+	curbuf->b_op_start.lnum = n + 1;
+	curbuf->b_op_end.lnum = n + count;
+	curbuf->b_op_start.col = curbuf->b_op_end.col = 0;
+    }
 
     /*
      * there are three situations:
@@ -1050,9 +1065,16 @@ do_filter(
     char_u	*cmd_buf;
     buf_T	*old_curbuf = curbuf;
     int		shell_flags = 0;
+    pos_T	orig_start = curbuf->b_op_start;
+    pos_T	orig_end = curbuf->b_op_end;
+    int		save_lockmarks = cmdmod.lockmarks;
 
     if (*cmd == NUL)	    /* no filter command */
 	return;
+
+    // Temporarily disable lockmarks since that's needed to propagate changed
+    // regions of the buffer for foldUpdate(), linecount, etc.
+    cmdmod.lockmarks = 0;
 
     cursor_save = curwin->w_cursor;
     linecount = line2 - line1 + 1;
@@ -1282,11 +1304,18 @@ error:
 
 filterend:
 
+    cmdmod.lockmarks = save_lockmarks;
     if (curbuf != old_curbuf)
     {
 	--no_wait_return;
 	emsg(_("E135: *Filter* Autocommands must not change current buffer"));
     }
+    else if (cmdmod.lockmarks)
+    {
+	curbuf->b_op_start = orig_start;
+	curbuf->b_op_end = orig_end;
+    }
+
     if (itmp != NULL)
 	mch_remove(itmp);
     if (otmp != NULL)
@@ -3271,13 +3300,16 @@ ex_append(exarg_T *eap)
      * eap->line2 pointed to the end of the buffer and nothing was appended)
      * "end" is set to lnum when something has been appended, otherwise
      * it is the same than "start"  -- Acevedo */
-    curbuf->b_op_start.lnum = (eap->line2 < curbuf->b_ml.ml_line_count) ?
-	eap->line2 + 1 : curbuf->b_ml.ml_line_count;
-    if (eap->cmdidx != CMD_append)
-	--curbuf->b_op_start.lnum;
-    curbuf->b_op_end.lnum = (eap->line2 < lnum)
-					     ? lnum : curbuf->b_op_start.lnum;
-    curbuf->b_op_start.col = curbuf->b_op_end.col = 0;
+    if (!cmdmod.lockmarks)
+    {
+	curbuf->b_op_start.lnum = (eap->line2 < curbuf->b_ml.ml_line_count) ?
+	    eap->line2 + 1 : curbuf->b_ml.ml_line_count;
+	if (eap->cmdidx != CMD_append)
+	    --curbuf->b_op_start.lnum;
+	curbuf->b_op_end.lnum = (eap->line2 < lnum)
+						 ? lnum : curbuf->b_op_start.lnum;
+	curbuf->b_op_start.col = curbuf->b_op_end.col = 0;
+    }
     curwin->w_cursor.lnum = lnum;
     check_cursor_lnum();
     beginline(BL_SOL | BL_FIX);
@@ -3862,6 +3894,7 @@ do_sub(exarg_T *eap)
 	    linenr_T	sub_firstlnum;	/* nr of first sub line */
 #ifdef FEAT_TEXT_PROP
 	    int		apc_flags = APC_SAVE_FOR_UNDO | APC_SUBSTITUTE;
+	    colnr_T	total_added =  0;
 #endif
 
 	    /*
@@ -3940,6 +3973,11 @@ do_sub(exarg_T *eap)
 		    nmatch -= regmatch.startpos[0].lnum;
 		    VIM_CLEAR(sub_firstline);
 		}
+
+		// Match might be after the last line for "\n\zs" matching at
+		// the end of the last line.
+		if (lnum > curbuf->b_ml.ml_line_count)
+		    break;
 
 		if (sub_firstline == NULL)
 		{
@@ -4274,13 +4312,18 @@ do_sub(exarg_T *eap)
 #ifdef FEAT_TEXT_PROP
 		    if (curbuf->b_has_textprop)
 		    {
+			int bytes_added = sublen - 1 - (regmatch.endpos[0].col
+						   - regmatch.startpos[0].col);
+
 			// When text properties are changed, need to save for
 			// undo first, unless done already.
-			if (adjust_prop_columns(lnum, regmatch.startpos[0].col,
-			      sublen - 1 - (regmatch.endpos[0].col
-						   - regmatch.startpos[0].col),
-								    apc_flags))
+			if (adjust_prop_columns(lnum,
+					total_added + regmatch.startpos[0].col,
+						       bytes_added, apc_flags))
 			    apc_flags &= ~APC_SAVE_FOR_UNDO;
+			// Offset for column byte number of the text property
+			// in the resulting buffer afterwards.
+			total_added += bytes_added;
 		    }
 #endif
 		}
@@ -4576,10 +4619,13 @@ outofmem:
 
     if (sub_nsubs > start_nsubs)
     {
-	/* Set the '[ and '] marks. */
-	curbuf->b_op_start.lnum = eap->line1;
-	curbuf->b_op_end.lnum = line2;
-	curbuf->b_op_start.col = curbuf->b_op_end.col = 0;
+	if (!cmdmod.lockmarks)
+	{
+	    // Set the '[ and '] marks.
+	    curbuf->b_op_start.lnum = eap->line1;
+	    curbuf->b_op_end.lnum = line2;
+	    curbuf->b_op_start.col = curbuf->b_op_end.col = 0;
+	}
 
 	if (!global_busy)
 	{
@@ -4919,13 +4965,14 @@ free_old_sub(void)
 #if defined(FEAT_QUICKFIX) || defined(PROTO)
 /*
  * Set up for a tagpreview.
+ * Makes the preview window the current window.
  * Return TRUE when it was created.
  */
     int
 prepare_tagpreview(
     int		undo_sync,	    // sync undo when leaving the window
     int		use_previewpopup,   // use popup if 'previewpopup' set
-    int		use_popup)	    // use other popup window
+    use_popup_T	use_popup)	    // use other popup window
 {
     win_T	*wp;
 
@@ -4943,13 +4990,21 @@ prepare_tagpreview(
 	{
 	    wp = popup_find_preview_window();
 	    if (wp != NULL)
-		popup_set_wantpos_cursor(wp, wp->w_minwidth);
+		popup_set_wantpos_cursor(wp, wp->w_minwidth, NULL);
 	}
-	else if (use_popup)
+	else if (use_popup != USEPOPUP_NONE)
 	{
 	    wp = popup_find_info_window();
 	    if (wp != NULL)
-		popup_show(wp);
+	    {
+		if (use_popup == USEPOPUP_NORMAL)
+		    popup_show(wp);
+		else
+		    popup_hide(wp);
+		// When the popup moves or resizes it may reveal part of
+		// another window.  TODO: can this be done more efficiently?
+		redraw_all_later(NOT_VALID);
+	    }
 	}
 	else
 # endif
@@ -4966,8 +5021,9 @@ prepare_tagpreview(
 	     * There is no preview window open yet.  Create one.
 	     */
 # ifdef FEAT_TEXT_PROP
-	    if ((use_previewpopup && *p_pvp != NUL) || use_popup)
-		return popup_create_preview_window(use_popup);
+	    if ((use_previewpopup && *p_pvp != NUL)
+						 || use_popup != USEPOPUP_NONE)
+		return popup_create_preview_window(use_popup != USEPOPUP_NONE);
 # endif
 	    if (win_split(g_do_tagpreview > 0 ? g_do_tagpreview : 0, 0) == FAIL)
 		return FALSE;

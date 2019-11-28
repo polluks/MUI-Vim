@@ -338,6 +338,7 @@
 #define WIM_FULL	0x01
 #define WIM_LONGEST	0x02
 #define WIM_LIST	0x04
+#define WIM_BUFLASTUSED	0x08
 
 // arguments for can_bs()
 #define BS_INDENT	'i'	// "Indent"
@@ -813,6 +814,9 @@ EXTERN char_u	*p_ruf;		// 'rulerformat'
 EXTERN char_u	*p_pp;		// 'packpath'
 EXTERN char_u	*p_rtp;		// 'runtimepath'
 EXTERN long	p_sj;		// 'scrolljump'
+#if defined(MSWIN) && defined(FEAT_GUI)
+EXTERN int	p_scf;		// 'scrollfocus'
+#endif
 EXTERN long	p_so;		// 'scrolloff'
 EXTERN char_u	*p_sbo;		// 'scrollopt'
 EXTERN char_u	*p_sections;	// 'sections'
@@ -907,11 +911,13 @@ EXTERN char_u	*p_su;		// 'suffixes'
 EXTERN char_u	*p_sws;		// 'swapsync'
 EXTERN char_u	*p_swb;		// 'switchbuf'
 EXTERN unsigned	swb_flags;
+// Keep in sync with p_swb_values in optionstr.c
 #define SWB_USEOPEN		0x001
 #define SWB_USETAB		0x002
 #define SWB_SPLIT		0x004
 #define SWB_NEWTAB		0x008
 #define SWB_VSPLIT		0x010
+#define SWB_USELAST		0x020
 EXTERN char_u	*p_syn;		// 'syntax'
 EXTERN long	p_ts;		// 'tabstop'
 EXTERN int	p_tbs;		// 'tagbsearch'
@@ -979,7 +985,7 @@ EXTERN unsigned tbis_flags;
 # define TBIS_GIANT		0x20
 #endif
 EXTERN long	p_ttyscroll;	// 'ttyscroll'
-#if defined(FEAT_MOUSE) && (defined(UNIX) || defined(VMS))
+#if defined(UNIX) || defined(VMS)
 EXTERN char_u	*p_ttym;	// 'ttymouse'
 EXTERN unsigned ttym_flags;
 # define TTYM_XTERM		0x01
@@ -1266,6 +1272,9 @@ enum
     , WV_CUL
     , WV_CULOPT
     , WV_CC
+#endif
+#ifdef FEAT_LINEBREAK
+    , WV_SBR
 #endif
 #ifdef FEAT_STL_OPT
     , WV_STL

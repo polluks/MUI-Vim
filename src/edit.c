@@ -235,7 +235,6 @@ edit(
     conceal_check_cursor_line();
 #endif
 
-#ifdef FEAT_MOUSE
     /*
      * When doing a paste with the middle mouse button, Insstart is set to
      * where the paste started.
@@ -243,7 +242,6 @@ edit(
     if (where_paste_started.lnum != 0)
 	Insstart = where_paste_started;
     else
-#endif
     {
 	Insstart = curwin->w_cursor;
 	if (startln)
@@ -325,9 +323,15 @@ edit(
     revins_scol = -1;
 #endif
     if (!p_ek)
-	/* Disable bracketed paste mode, we won't recognize the escape
-	 * sequences. */
+    {
+	// Disable bracketed paste mode, we won't recognize the escape
+	// sequences.
 	out_str(T_BD);
+
+	// Disable modifyOtherKeys, keys with modifiers would cause exiting
+	// Insert mode.
+	out_str(T_CTE);
+    }
 
     /*
      * Handle restarting Insert mode.
@@ -336,7 +340,6 @@ edit(
      */
     if (restart_edit != 0 && stuff_empty())
     {
-#ifdef FEAT_MOUSE
 	/*
 	 * After a paste we consider text typed to be part of the insert for
 	 * the pasted text. You can backspace over the pasted text too.
@@ -344,7 +347,6 @@ edit(
 	if (where_paste_started.lnum)
 	    arrow_used = FALSE;
 	else
-#endif
 	    arrow_used = TRUE;
 	restart_edit = 0;
 
@@ -381,9 +383,7 @@ edit(
     /* Need to save the line for undo before inserting the first char. */
     ins_need_undo = TRUE;
 
-#ifdef FEAT_MOUSE
     where_paste_started.lnum = 0;
-#endif
 #ifdef FEAT_CINDENT
     can_cindent = TRUE;
 #endif
@@ -980,7 +980,6 @@ doESCkey:
 	    inserted_space = FALSE;
 	    break;
 
-#ifdef FEAT_MOUSE
 	case K_LEFTMOUSE:   /* mouse keys */
 	case K_LEFTMOUSE_NM:
 	case K_LEFTDRAG:
@@ -1017,7 +1016,7 @@ doESCkey:
 	case K_MOUSERIGHT: /* Scroll wheel right */
 	    ins_mousescroll(MSCR_RIGHT);
 	    break;
-#endif
+
 	case K_PS:
 	    bracketed_paste(PASTE_INSERT, FALSE, NULL);
 	    if (cmdchar == K_PS)
@@ -3239,7 +3238,7 @@ oneleft(void)
 	    /* getviscol() is slow, skip it when 'showbreak' is empty,
 	     * 'breakindent' is not set and there are no multi-byte
 	     * characters */
-	    if ((*p_sbr == NUL && !curwin->w_p_bri
+	    if ((*get_showbreak_value(curwin) == NUL && !curwin->w_p_bri
 					     && !has_mbyte) || getviscol() < v)
 		break;
 	    ++width;
@@ -4119,16 +4118,6 @@ ins_esc(
 #ifdef FEAT_SPELL
     check_spell_redraw();
 #endif
-#if defined(FEAT_HANGULIN)
-# if defined(ESC_CHG_TO_ENG_MODE)
-    hangul_input_state_set(0);
-# endif
-    if (composing_hangul)
-    {
-	push_raw_key(composing_hangul_buffer, 2);
-	composing_hangul = 0;
-    }
-#endif
 
     temp = curwin->w_cursor.col;
     if (disabled_redraw)
@@ -4227,11 +4216,16 @@ ins_esc(
 
     setmouse();
 #ifdef CURSOR_SHAPE
-    ui_cursor_shape();		/* may show different cursor shape */
+    ui_cursor_shape();		// may show different cursor shape
 #endif
     if (!p_ek)
-	/* Re-enable bracketed paste mode. */
+    {
+	// Re-enable bracketed paste mode.
 	out_str(T_BE);
+
+	// Re-enable modifyOtherKeys.
+	out_str(T_CTI);
+    }
 
     // When recording or for CTRL-O, need to display the new mode.
     // Otherwise remove the mode message.
@@ -4240,7 +4234,7 @@ ins_esc(
     else if (p_smd && (got_int || !skip_showmode()))
 	msg("");
 
-    return TRUE;	    /* exit Insert mode */
+    return TRUE;	    // exit Insert mode
 }
 
 #ifdef FEAT_RIGHTLEFT

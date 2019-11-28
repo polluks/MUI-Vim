@@ -788,6 +788,12 @@ mch_can_restore_icon(void)
 }
 #endif
 
+    void
+mch_setmouse(int on UNUSED)
+{
+    // TODO: implement
+}
+
 /*
  * Insert user name in s[len].
  */
@@ -1812,4 +1818,3 @@ mch_setenv(char *var, char *value, int x)
 	return 0;   /* success */
     return -1;	    /* failure */
 }
-
