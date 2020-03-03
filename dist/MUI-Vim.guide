@@ -1,7 +1,7 @@
 @DATABASE "Default"
 @NODE Main "MUI-Vim Guide"
 @TOC Contents
-@$VER: MUI-Vim.guide 8.1.2146 (20.10.19) english
+@$VER: MUI-Vim.guide 8.2.25 (21.12.19) english
 @{B}Contents@{UB}
 @{B}-----------------------------------------------------------------------------@{UB}
 @{" Introduction     " LINK "Introduction"} What's MUI-Vim?
@@ -42,8 +42,8 @@ this, e.g NetRW which will crash badly occasionally.
 @TOC "Main"
 @{B}Known limitations@{UB}
 @{B}-----------------------------------------------------------------------------@{UB}
-Running MUI-Vim in text mode (from shell) isn't the best experience. The size
-of the console window can't be detected by Vim.
+When running Vim in text mode, window resizing isn't detected by Vim. After a
+window resize, press Ctrl + L to resize and redraw the Vim console.
 
 @ENDNODE
 
@@ -66,8 +66,12 @@ Hollywood syntax highlighting.
 @TOC "Main"
 @{B}The complete changelog@{UB}
 @{B}-----------------------------------------------------------------------------@{UB}
-@{B}2019-NOT-YET@{UB}
-- Update to VIM 8.1.X.
+@{B}2020-NOT-YET@{UB}
+- Update to VIM 8.2.XYZ.
+- Vim now correctly detects initial Window size when executed in text mode.
+
+@{B}2019-12-21@{UB}
+- Update to VIM 8.2.25.
 - AmigaGuide syntax highlighting.
 
 @{B}2019-10-20@{UB}
@@ -80,7 +84,7 @@ Hollywood syntax highlighting.
 
 @{B}2019-02-16@{UB}
 - Amiga Installer script V44 syntax highlighting.
-- Update to VIM 8.1.0932.
+- Update to VIM 8.1.932.
 
 @{B}2018-10-23@{UB}
 - Minor fix in Amiga Installer script syntax highlighting.

@@ -36,8 +36,18 @@
     Error: configure did not run properly.  Check auto/config.log.
 # endif
 
+# if (defined(__linux__) && !defined(__ANDROID__)) || defined(__CYGWIN__)
+// Needed for strptime().  Needs to be done early, since header files can
+// include other header files and end up including time.h, where these symbols
+// matter for Vim.
+// 700 is needed for mkdtemp().
+#  ifndef _XOPEN_SOURCE
+#   define _XOPEN_SOURCE    700
+#  endif
+# endif
+
 // for INT_MAX, LONG_MAX et al.
-#include <limits.h>
+# include <limits.h>
 
 /*
  * Cygwin may have fchdir() in a newer release, but in most versions it
@@ -526,6 +536,10 @@ extern char *(*dyn_libintl_textdomain)(const char *domainname);
 extern int (*dyn_libintl_wputenv)(const wchar_t *envstring);
 #endif
 
+/* INSERT is defined on Amiga */
+# ifdef INSERT
+#  undef INSERT
+# endif
 
 /*
  * The _() stuff is for using gettext().  It is a no-op when libintl.h is not
@@ -644,7 +658,7 @@ extern int (*dyn_libintl_wputenv)(const wchar_t *envstring);
 #define POPUP_HANDLED_4	    0x08    // used by may_update_popup_mask()
 #define POPUP_HANDLED_5	    0x10    // used by update_popups()
 
-#ifdef FEAT_TEXT_PROP
+#ifdef FEAT_PROP_POPUP
 # define WIN_IS_POPUP(wp) ((wp)->w_popup_flags != 0)
 #else
 # define WIN_IS_POPUP(wp) 0
@@ -795,6 +809,7 @@ extern int (*dyn_libintl_wputenv)(const wchar_t *envstring);
 #define EXPAND_MESSAGES		46
 #define EXPAND_MAPCLEAR		47
 #define EXPAND_ARGLIST		48
+#define EXPAND_DIFF_BUFFERS	49
 
 // Values for exmode_active (0 is no exmode)
 #define EXMODE_NORMAL		1
@@ -823,6 +838,7 @@ extern int (*dyn_libintl_wputenv)(const wchar_t *envstring);
 #define WILD_IGNORE_COMPLETESLASH   0x400
 #define WILD_NOERROR		    0x800  // sets EW_NOERROR
 #define WILD_BUFLASTUSED	    0x1000
+#define BUF_DIFF_FILTER		    0x2000
 
 // Flags for expand_wildcards()
 #define EW_DIR		0x01	// include directory names
@@ -1767,11 +1783,18 @@ void *vim_memset(void *, int, size_t);
 #ifndef EXTERN
 # define EXTERN extern
 # define INIT(x)
+# define INIT2(a, b)
+# define INIT3(a, b, c)
+# define INIT4(a, b, c, d)
+# define INIT5(a, b, c, d, e)
 #else
 # ifndef INIT
 #  define INIT(x) x
+#  define INIT2(a, b) = {a, b}
+#  define INIT3(a, b, c) = {a, b, c}
+#  define INIT4(a, b, c, d) = {a, b, c, d}
+#  define INIT5(a, b, c, d, e) = {a, b, c, d, e}
 #  define DO_INIT
-#  define COMMA ,
 # endif
 #endif
 
@@ -2004,11 +2027,11 @@ typedef int sock_T;
 #define VV_ARGV		93
 #define VV_LEN		94	// number of v: vars
 
-// used for v_number in VAR_SPECIAL
-#define VVAL_FALSE	0L
-#define VVAL_TRUE	1L
-#define VVAL_NONE	2L
-#define VVAL_NULL	3L
+// used for v_number in VAR_BOOL and VAR_SPECIAL
+#define VVAL_FALSE	0L	// VAR_BOOL
+#define VVAL_TRUE	1L	// VAR_BOOL
+#define VVAL_NONE	2L	// VAR_SPECIAL
+#define VVAL_NULL	3L	// VAR_SPECIAL
 
 // Type values for type().
 #define VAR_TYPE_NUMBER	    0
@@ -2063,7 +2086,7 @@ typedef struct
     short_u	origin_end_col;
     short_u	word_start_col;
     short_u	word_end_col;
-#ifdef FEAT_TEXT_PROP
+#ifdef FEAT_PROP_POPUP
     // limits for selection inside a popup window
     short_u	min_col;
     short_u	max_col;
@@ -2452,9 +2475,10 @@ typedef enum {
 #define VIF_GET_OLDFILES	8	// load v:oldfiles
 
 // flags for buf_freeall()
-#define BFA_DEL		1	// buffer is going to be deleted
-#define BFA_WIPE	2	// buffer is going to be wiped out
-#define BFA_KEEP_UNDO	4	// do not free undo information
+#define BFA_DEL		 1	// buffer is going to be deleted
+#define BFA_WIPE	 2	// buffer is going to be wiped out
+#define BFA_KEEP_UNDO	 4	// do not free undo information
+#define BFA_IGNORE_ABORT 8	// do not abort for aborting()
 
 // direction for nv_mousescroll() and ins_mousescroll()
 #define MSCR_DOWN	0	// DOWN must be FALSE
@@ -2542,15 +2566,15 @@ typedef enum {
 				// be freed.
 
 // errors for when calling a function
-#define ERROR_UNKNOWN	0
-#define ERROR_TOOMANY	1
-#define ERROR_TOOFEW	2
-#define ERROR_SCRIPT	3
-#define ERROR_DICT	4
-#define ERROR_NONE	5
-#define ERROR_OTHER	6
-#define ERROR_DELETED	7
-#define ERROR_NOTMETHOD	8   // function cannot be used as a method
+#define FCERR_UNKNOWN	0
+#define FCERR_TOOMANY	1
+#define FCERR_TOOFEW	2
+#define FCERR_SCRIPT	3
+#define FCERR_DICT	4
+#define FCERR_NONE	5
+#define FCERR_OTHER	6
+#define FCERR_DELETED	7
+#define FCERR_NOTMETHOD	8   // function cannot be used as a method
 
 // flags for find_name_end()
 #define FNE_INCL_BR	1	// include [] in name
