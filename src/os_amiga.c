@@ -28,6 +28,10 @@
 # include <intuition/intuition.h>
 #endif
 
+#ifdef __amigaos4__
+# define KPrintF DebugPrintF
+#endif
+
 // XXX These are included from os_amiga.h
 // #include <proto/exec.h>
 // #include <proto/dos.h>
@@ -110,6 +114,9 @@ static char version[] __attribute__((used)) =
     VIM_VERSION_MINOR_STR
 # ifdef PATCHLEVEL
     "." PATCHLEVEL
+# endif
+# ifdef BUILDDATE
+    " (" BUILDDATE ")"
 # endif
     ;
 #endif
@@ -231,14 +238,14 @@ mch_avail_mem(int special)
 
 /*
  * Waits a specified amount of time, or until input arrives if
- * ignoreinput is FALSE.
+ * flags does not have MCH_DELAY_IGNOREINPUT.
  */
     void
-mch_delay(long msec, int ignoreinput)
+mch_delay(long msec, int flags)
 {
     if (msec > 0)
     {
-	if (ignoreinput)
+	if (flags & MCH_DELAY_IGNOREINPUT)
 	    Delay(msec / 20L);	    // Delay works with 20 msec intervals
 	else
 	    WaitForChar(raw_in, msec * 1000L);
@@ -261,6 +268,13 @@ mch_suspend(void)
     void
 mch_init(void)
 {
+#ifdef FEAT_GUI
+    if(gui.starting)
+    {
+        return;
+    }
+#endif
+
 #if !defined(__amigaos4__) && !defined(__AROS__) && !defined(__MORPHOS__)
     static char	    intlibname[] = "intuition.library";
 #endif
@@ -306,73 +320,81 @@ mch_init(void)
 
 static char **cmd_args;
 
+/*
+ * Check if we're started from Workbench.
+ */
 static BOOL is_wb_args(char **argv)
 {
     return argv == cmd_args;
 }
 
+/*
+ * Free Workbench argument list.
+ */
 static void free_cmd_args(void)
 {
-    if(cmd_args)
+    if(!cmd_args)
     {
-	char **arg = cmd_args;
-
-	while(*arg)
-	{
-	    free(*arg);
-	    arg++;
-	}
-
-	free(cmd_args);
-	cmd_args = NULL;
+	return;
     }
+
+    char **arg = cmd_args;
+
+    while(*arg)
+    {
+	free(*arg);
+	arg++;
+    }
+
+    free(cmd_args);
+    cmd_args = NULL;
 }
 
+/*
+ * Replace argv with the corresponding list of Workbench arguments
+ */
 int get_cmd_argsA(int argc, char ***argvp)
 {
-    if(!argc)
+    struct WBStartup *wb = (struct WBStartup *) *argvp;
+    if(argc || !wb->sm_NumArgs)
     {
-        struct WBStartup *wb = (struct WBStartup *) *argvp;
-
-	free_cmd_args();
-
-        if(wb->sm_NumArgs)
-        {
-	    cmd_args = calloc(wb->sm_NumArgs + 1, sizeof(char *));
-
-	    if(cmd_args)
-	    {
-		struct WBArg *arg = wb->sm_ArgList;
-
-		LONG i = 0;
-		cmd_args[i++] = strdup(arg->wa_Name);
-		CurrentDir(arg->wa_Lock);
-
-		while(i < wb->sm_NumArgs && cmd_args[i - 1])
-		{
-                    static char path[PATH_MAX + 1];
-
-		    if( arg[i].wa_Name[0] != '-' &&
-		        lock2name(arg[i].wa_Lock, path, PATH_MAX))
-                    {
-		        AddPart(path, arg[i].wa_Name, PATH_MAX);
-		        cmd_args[i] = strdup(path);
-                    }
-                    else
-                    {
-		        cmd_args[i] = strdup(arg[i].wa_Name);
-                    }
-
-		    i++;
-		}
-
-		*argvp = cmd_args;
-		return i;
-	    }
-        }
+	return argc;
     }
 
-    return argc;
+    free_cmd_args();
+    cmd_args = calloc(wb->sm_NumArgs + 1, sizeof(char *));
+    if(!cmd_args)
+    {
+	return 0;
+    }
+
+    int i = 0;
+    struct WBArg *arg = wb->sm_ArgList;
+    BPTR old = CurrentDir(arg->wa_Lock);
+    cmd_args[i++] = strdup(arg->wa_Name);
+
+    while(i < wb->sm_NumArgs && cmd_args[i - 1])
+    {
+	static char path[PATH_MAX + 1];
+
+	// If the argument starts with a '-' and there's no such file, just
+	// copy it verbatim. If it's file, copy the absolute path.
+	if(arg[i].wa_Name[0] != '-' &&
+	   lock2name(arg[i].wa_Lock, path, PATH_MAX))
+	{
+	    AddPart(path, arg[i].wa_Name, PATH_MAX);
+	    cmd_args[i] = strdup(path);
+	}
+	else
+	{
+	    cmd_args[i] = strdup(arg[i].wa_Name);
+	}
+	i++;
+    }
+
+    *argvp = cmd_args;
+    (void) CurrentDir(old);
+    return i;
 }
 
 /*
@@ -1107,7 +1129,7 @@ mch_exit(int r)
  *	it sends a 0 to the console to make it back into a CON: from a RAW:
  */
     void
-mch_settmode(int tmode)
+mch_settmode(tmode_T tmode)
 {
 #if defined(__AROS__) || defined(__amigaos4__) || defined(__MORPHOS__)
     if (!SetMode(raw_in, tmode == TMODE_RAW ? 1 : 0))
@@ -1116,16 +1138,6 @@ mch_settmode(int tmode)
 					  tmode == TMODE_RAW ? -1L : 0L) == 0)
 #endif
 	mch_errmsg(_("cannot change console mode ?!\n"));
-}
-
-/*
- * set screen mode, always fails.
- */
-    int
-mch_screenmode(char_u *arg)
-{
-    emsg(_(e_screenmode));
-    return FAIL;
 }
 
 /*
@@ -1145,12 +1157,19 @@ mch_screenmode(char_u *arg)
 #endif
 
 /*
- * Try to get console size in a system friendly way.
+ * Get console size in a system friendly way on AROS and MorphOS.
  * Return FAIL for failure, OK otherwise
  */
-#ifdef NEW_SHELLSIZE
+#if defined(__AROS__) || defined(__MORPHOS__)
 int mch_get_shellsize(void)
 {
+#ifdef FEAT_GUI
+    if (gui.in_use || gui.starting)
+    {
+        return FAIL;
+    }
+#endif
+
     if(!term_console)
     {
         return FAIL;
@@ -1164,13 +1183,13 @@ int mch_get_shellsize(void)
         // Set RAW term mode.
         mch_settmode(TMODE_RAW);
 
-        const char ctrl[] = "\x9b""0 q";
+        char ctrl[] = "\x9b""0 q";
 
 	// Write control sequence to term.
 	if(Write(raw_out, ctrl, sizeof(ctrl)) == sizeof(ctrl))
 	{
-            const char scan[] = "\x9b""1;1;%d;%d r",
-                       answ[sizeof(scan) + 8] = { '\0' };
+            char scan[] = "\x9b""1;1;%d;%d r",
+                 answ[sizeof(scan) + 8] = { '\0' };
 
 	    // Read return sequence from input.
 	    if(Read(raw_in, answ, sizeof(answ) - 1) > 0)
@@ -1196,18 +1215,27 @@ int mch_get_shellsize(void)
 
     return FAIL;
 }
-#else // NEW_SHELLSIZE
+#else
     int
 mch_get_shellsize(void)
 {
+#ifdef FEAT_GUI
+    if (gui.in_use || gui.starting)
+    {
+        return FAIL;
+    }
+#endif
+
+    if(!term_console)
+    {
+        return FAIL;
+    }
+
     struct ConUnit  *conUnit;
 #ifndef __amigaos4__
     char	    id_a[sizeof(struct InfoData) + 3];
 #endif
     struct InfoData *id=0;
-
-    if (!term_console)	// not an amiga window
-	goto out;
 
     // insure longword alignment
 #ifdef __amigaos4__
@@ -1267,7 +1295,7 @@ out:
 
     return FAIL;
 }
-#endif // NEW_SHELLSIZE
+#endif
 
 /*
  * Try to set the real window size to Rows and Columns.
@@ -1577,7 +1605,11 @@ mch_call_shell(
     if ((mydir = CurrentDir(mydir)) != 0) // make sure we stay in the same directory
 	UnLock(mydir);
     if (tmode == TMODE_RAW)
+    {
+	// The shell may have messed with the mode, always set it.
+	cur_tmode = TMODE_UNKNOWN;
 	settmode(TMODE_RAW);		// set to raw mode
+    }
 #ifdef FEAT_TITLE
     resettitle();
 #endif
@@ -1805,6 +1837,16 @@ mch_has_wildcard(char_u *p)
 		return TRUE;
     }
     return FALSE;
+}
+
+/*
+ * Return TRUE if "name" is a valid console
+ */
+    int
+mch_is_console(char_u *name)
+{
+    return STRCMP(name, "amiga") == 0 ||
+	   STRCMP(name, "morphos") == 0;
 }
 
 /*

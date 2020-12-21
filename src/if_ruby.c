@@ -21,7 +21,7 @@
 
 #ifdef _WIN32
 # if !defined(DYNAMIC_RUBY) || (RUBY_VERSION < 18)
-#   define NT
+#  define NT
 # endif
 # ifndef DYNAMIC_RUBY
 #  define IMPORT // For static dll usage __declspec(dllimport)
@@ -99,12 +99,24 @@
 # define rb_ary_detransient rb_ary_detransient_stub
 #endif
 
+// On macOS pre-installed Ruby defines "SIZEOF_TIME_T" as "SIZEOF_LONG" so it
+// conflicts with the definition in config.h then causes a macro-redefined
+// warning.
+#ifdef SIZEOF_TIME_T
+# undef SIZEOF_TIME_T
+#endif
+
 #include <ruby.h>
 #if RUBY_VERSION >= 19
 # include <ruby/encoding.h>
 #endif
 #if RUBY_VERSION <= 18
 # include <st.h>  // for ST_STOP and ST_CONTINUE
+#endif
+
+// See above.
+#ifdef SIZEOF_TIME_T
+# undef SIZEOF_TIME_T
 #endif
 
 #undef off_t	// ruby defines off_t as _int64, Mingw uses long
@@ -209,6 +221,14 @@ static int ruby_convert_to_vim_value(VALUE val, typval_T *rettv);
 /*
  * Wrapper defines
  */
+// Ruby 2.7 actually expands the following symbols as macro.
+# if RUBY_VERSION >= 27
+#  undef rb_define_global_function
+#  undef rb_define_method
+#  undef rb_define_module_function
+#  undef rb_define_singleton_method
+# endif
+
 # define rb_assoc_new			dll_rb_assoc_new
 # define rb_cObject			(*dll_rb_cObject)
 # define rb_class_new_instance		dll_rb_class_new_instance
@@ -300,8 +320,8 @@ static int ruby_convert_to_vim_value(VALUE val, typval_T *rettv);
 #  define rb_float_new			dll_rb_float_new
 #  define rb_ary_new			dll_rb_ary_new
 #  ifdef rb_ary_new4
-#    define RB_ARY_NEW4_MACRO 1
-#    undef rb_ary_new4
+#   define RB_ARY_NEW4_MACRO 1
+#   undef rb_ary_new4
 #  endif
 #  define rb_ary_new4			dll_rb_ary_new4
 #  define rb_ary_push			dll_rb_ary_push
@@ -490,6 +510,10 @@ static void (*dll_rb_gc_writebarrier_unprotect_promoted)(VALUE);
 #  else
 static void (*dll_rb_gc_writebarrier_unprotect)(VALUE obj);
 #  endif
+# endif
+
+# if RUBY_VERSION >= 26
+void rb_ary_detransient_stub(VALUE x);
 # endif
 
 # if (RUBY_VERSION >= 19) && !defined(PROTO)
@@ -728,19 +752,6 @@ static struct
 };
 
 /*
- * Free ruby.dll
- */
-    static void
-end_dynamic_ruby(void)
-{
-    if (hinstRuby)
-    {
-	close_dll(hinstRuby);
-	hinstRuby = NULL;
-    }
-}
-
-/*
  * Load library and get all pointers.
  * Parameter 'libname' provides name of DLL.
  * Return OK or FAIL.
@@ -789,9 +800,6 @@ ruby_enabled(int verbose)
     void
 ruby_end(void)
 {
-#ifdef DYNAMIC_RUBY
-    end_dynamic_ruby();
-#endif
 }
 
     void
@@ -1071,15 +1079,15 @@ error_print(int state)
 	    }
 
 	    attr = syn_name2attr((char_u *)"Error");
-# if RUBY_VERSION >= 21
+#if RUBY_VERSION >= 21
 	    bt = rb_funcallv(error, rb_intern("backtrace"), 0, 0);
 	    for (i = 0; i < RARRAY_LEN(bt); i++)
 		msg_attr(RSTRING_PTR(RARRAY_AREF(bt, i)), attr);
-# else
+#else
 	    bt = rb_funcall2(error, rb_intern("backtrace"), 0, 0);
 	    for (i = 0; i < RARRAY_LEN(bt); i++)
 		msg_attr(RSTRING_PTR(RARRAY_PTR(bt)[i]), attr);
-# endif
+#endif
 	    break;
 	default:
 	    vim_snprintf(buff, BUFSIZ, _("E273: unknown longjmp status %d"), state);
@@ -1155,7 +1163,7 @@ vim_to_ruby(typval_T *tv)
 
 	if (list != NULL)
 	{
-	    for (curr = list->lv_first; curr != NULL; curr = curr->li_next)
+	    FOR_ALL_LIST_ITEMS(list, curr)
 		rb_ary_push(result, vim_to_ruby(&curr->li_tv));
 	}
     }
@@ -1228,7 +1236,7 @@ static const rb_data_type_t buffer_type = {
     "vim_buffer",
     {0, 0, buffer_dsize,
 # if RUBY_VERSION >= 27
-	0, 0
+	0, {0}
 # else
 	{0, 0}
 # endif
@@ -1296,13 +1304,19 @@ vim_blob(VALUE self UNUSED, VALUE str)
 }
 
     static VALUE
-buffer_s_current(void)
+buffer_s_current(VALUE self UNUSED)
 {
     return buffer_new(curbuf);
 }
 
     static VALUE
-buffer_s_count(void)
+buffer_s_current_getter(ID id UNUSED, VALUE *x UNUSED)
+{
+    return buffer_new(curbuf);
+}
+
+    static VALUE
+buffer_s_count(VALUE self UNUSED)
 {
     buf_T *b;
     int n = 0;
@@ -1438,7 +1452,7 @@ buffer_delete(VALUE self, VALUE num)
 
 	if (u_savedel(n, 1) == OK)
 	{
-	    ml_delete(n, 0);
+	    ml_delete(n);
 
 	    // Changes to non-active buffers should properly refresh
 	    //   SegPhault - 01/09/05
@@ -1508,7 +1522,7 @@ static const rb_data_type_t window_type = {
     "vim_window",
     {0, 0, window_dsize,
 # if RUBY_VERSION >= 27
-	0, 0
+	0, {0}
 # else
 	{0, 0}
 # endif
@@ -1562,7 +1576,13 @@ get_win(VALUE obj)
 }
 
     static VALUE
-window_s_current(void)
+window_s_current(VALUE self UNUSED)
+{
+    return window_new(curwin);
+}
+
+    static VALUE
+window_s_current_getter(ID id UNUSED, VALUE *x UNUSED)
 {
     return window_new(curwin);
 }
@@ -1572,7 +1592,7 @@ window_s_current(void)
  *    SegPhault - 03/07/05
  */
     static VALUE
-line_s_current(void)
+line_s_current(VALUE self UNUSED)
 {
     return get_buffer_line(curbuf, curwin->w_cursor.lnum);
 }
@@ -1584,13 +1604,13 @@ set_current_line(VALUE self UNUSED, VALUE str)
 }
 
     static VALUE
-current_line_number(void)
+current_line_number(VALUE self UNUSED)
 {
     return INT2FIX((int)curwin->w_cursor.lnum);
 }
 
     static VALUE
-window_s_count(void)
+window_s_count(VALUE self UNUSED)
 {
     win_T	*w;
     int n = 0;
@@ -1790,8 +1810,8 @@ ruby_vim_init(void)
     rb_define_method(cVimWindow, "cursor", window_cursor, 0);
     rb_define_method(cVimWindow, "cursor=", window_set_cursor, 1);
 
-    rb_define_virtual_variable("$curbuf", buffer_s_current, 0);
-    rb_define_virtual_variable("$curwin", window_s_current, 0);
+    rb_define_virtual_variable("$curbuf", buffer_s_current_getter, 0);
+    rb_define_virtual_variable("$curwin", window_s_current_getter, 0);
 }
 
     void
@@ -1854,7 +1874,7 @@ ruby_convert_to_vim_value(VALUE val, typval_T *rettv)
 
 		rettv->v_type = VAR_STRING;
 		rettv->vval.v_string = vim_strnsave((char_u *)RSTRING_PTR(str),
-							 (int)RSTRING_LEN(str));
+							     RSTRING_LEN(str));
 	    }
 	    break;
 	case T_ARRAY:

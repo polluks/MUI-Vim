@@ -1,7 +1,7 @@
 " zip.vim: Handles browsing zipfiles
 "            AUTOLOAD PORTION
 " Date:		Jan 07, 2020
-" Version:	30
+" Version:	31
 " Maintainer:	Charles E Campbell <NcampObell@SdrPchip.AorgM-NOSPAM>
 " License:	Vim License  (see vim's :help license)
 " Copyright:    Copyright (C) 2005-2019 Charles E. Campbell {{{1
@@ -20,7 +20,7 @@
 if &cp || exists("g:loaded_zip")
  finish
 endif
-let g:loaded_zip= "v30"
+let g:loaded_zip= "v31"
 if v:version < 702
  echohl WarningMsg
  echo "***warning*** this version of zip needs vim 7.2 or later"
@@ -72,7 +72,7 @@ fun! zip#Browse(zipfile)
 "   call Dret("zip#Browse : not a zipfile<".a:zipfile.">")
    return
 "  else        " Decho
-"   call Decho("zip#Browse: a:zipfile<".a:zipfile."> passed PK test - its a zip file")
+"   call Decho("zip#Browse: a:zipfile<".a:zipfile."> passed PK test - it's a zip file")
   endif
 
   let repkeep= &report
@@ -95,7 +95,7 @@ fun! zip#Browse(zipfile)
   endif
   if !filereadable(a:zipfile)
    if a:zipfile !~# '^\a\+://'
-    " if its an url, don't complain, let url-handlers such as vim do its thing
+    " if it's an url, don't complain, let url-handlers such as vim do its thing
     redraw!
     echohl Error | echo "***error*** (zip#Browse) File not readable<".a:zipfile.">" | echohl None
 "    call inputsave()|call input("Press <cr> to continue")|call inputrestore()

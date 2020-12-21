@@ -598,6 +598,12 @@ set_file_time(
 }
 #endif // UNIX
 
+    char *
+new_file_message(void)
+{
+    return shortmess(SHM_NEW) ? _("[New]") : _("[New File]");
+}
+
 /*
  * buf_write() - write to file "fname" lines "start" through "end"
  *
@@ -877,7 +883,7 @@ buf_write(
 #endif
 				       )
 	{
-	    if (buf != NULL && cmdmod.lockmarks)
+	    if (buf != NULL && (cmdmod.cmod_flags & CMOD_LOCKMARKS))
 	    {
 		// restore the original '[ and '] positions
 		buf->b_op_start = orig_start;
@@ -961,7 +967,7 @@ buf_write(
 	    fname = buf->b_sfname;
     }
 
-    if (cmdmod.lockmarks)
+    if (cmdmod.cmod_flags & CMOD_LOCKMARKS)
     {
 	// restore the original '[ and '] positions
 	buf->b_op_start = orig_start;
@@ -2347,7 +2353,7 @@ restore_backup:
 	}
 	else if (newfile)
 	{
-	    STRCAT(IObuff, shortmess(SHM_NEW) ? _("[New]") : _("[New File]"));
+	    STRCAT(IObuff, new_file_message());
 	    c = TRUE;
 	}
 	if (no_eol)
@@ -2572,6 +2578,12 @@ nofail:
 	    retval = FALSE;
 #endif
     }
+
+#ifdef FEAT_VIMINFO
+    // Make sure marks will be written out to the viminfo file later, even when
+    // the file is new.
+    curbuf->b_marks_read = TRUE;
+#endif
 
     got_int |= prev_got_int;
 
